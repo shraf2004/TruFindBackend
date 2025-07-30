@@ -32,7 +32,7 @@ const pool = new Pool({
     port: process.env.DB_PORT,
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
+    password: process.env.DB_PASS,
     ssl: { rejectUnauthorized: false }
 });
 
@@ -236,6 +236,9 @@ app.delete("/delete-posts/:id", (req, res) => {
 });
 
 // ✅ Start the Server
-app.listen(3000, () => {
-    console.log("🚀 Server running at http://localhost:3000");
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
+
