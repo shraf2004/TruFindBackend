@@ -242,3 +242,13 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running at http://localhost:${PORT}`);
 });
 
+
+
+app.get("/test-db", async (req, res) => {
+  try {
+    const result = await pool.query("SELECT * FROM users");
+    res.json({ success: true, rows: result.rows });
+  } catch (err) {
+    res.json({ success: false, error: err.message });
+  }
+});
