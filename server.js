@@ -55,70 +55,71 @@ app.post("/send-code", (req, res) => {
         return res.json({ success: false, message: "Only Truman email allowed." });
     }
 
-    if (!verificationCode || registeredUserEmail !== email) {
-        verificationCode = genCode();
-        console.log("Generated code:", verificationCode);
-    }
+    const code = genCode(); // always generate new code
 
-    registeredUserName = name;
-    registeredUserEmail = email;
+    bcrypt.hash(password, 10, (err, hashedPassword) => {
+        if (err) return res.json({ success: false, message: "Password error" });
 
-    bcrypt.hash(password, 10, (err, hash) => {
-        if (err) {
-            console.error("Error hashing password:", err);
-            return res.json({ success: false, message: "Password hashing failed." });
+        const sql = `
+            INSERT INTO users (name, email, password, verification_code)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (email) DO UPDATE
+            SET name = EXCLUDED.name, password = EXCLUDED.password, verification_code = EXCLUDED.verification_code
+        `;
+        pool.query(sql, [name, email, hashedPassword, code], (err) => {
+            if (err) {
+                console.error("DB error:", err);
+                return res.json({ success: false, message: "Database error" });
+            }
+
+            const transporter = nodemailer.createTransport({
+                service: "gmail",
+                auth: {
+                    user: process.env.GMAIL_USER,
+                    pass: process.env.GMAIL_PASS
+                }
+            });
+
+            const mailOptions = {
+                from: process.env.GMAIL_USER,
+                to: email,
+                subject: "Your TruFind Verification Code",
+                text: `Your verification code is: ${code}`
+            };
+
+            transporter.sendMail(mailOptions, (err) => {
+                if (err) return res.json({ success: false, message: "Email error" });
+                return res.json({ success: true });
+            });
+        });
+    });
+});
+
+
+// ✅ Verify Code and Register User
+app.post("/verify-code", (req, res) => {
+    const { email, code } = req.body;
+
+    const sql = "SELECT * FROM users WHERE email=$1 AND verification_code=$2";
+    pool.query(sql, [email, code], (err, result) => {
+        if (err || result.rows.length === 0) {
+            return res.json({ success: false, message: "Invalid code or email" });
         }
 
-        registeredUserPassword = hash;
-
-        const transporter = nodemailer.createTransport({
-            service: "gmail",
-            auth: {
-                user: process.env.GMAIL_USER,
-                pass: process.env.GMAIL_PASS
-            }
-        });
-
-        const mailOptions = {
-            from: process.env.GMAIL_USER,
-            to: email,
-            subject: "Your TruFind Verification Code",
-            text: `Your verification code is: ${verificationCode}`
-        };
-
-        transporter.sendMail(mailOptions, (err) => {
+        const updateSQL = `
+            UPDATE users SET is_verified = true, verification_code = NULL
+            WHERE email = $1
+        `;
+        pool.query(updateSQL, [email], (err) => {
             if (err) {
-                console.error("Email error:", err);
-                return res.json({ success: false, message: "Email sending failed." });
+                console.error("DB update error:", err);
+                return res.json({ success: false, message: "Failed to verify" });
             }
             return res.json({ success: true });
         });
     });
 });
 
-// ✅ Verify Code and Register User
-app.post("/verify-code", (req, res) => {
-    const { code } = req.body;
-
-    if (code.trim() === verificationCode) {
-        const sql = "INSERT INTO users (name, email, password) VALUES ($1, $2, $3)";
-        pool.query(sql, [registeredUserName, registeredUserEmail, registeredUserPassword], (err) => {
-            if (err) {
-                if (err.code === '23505') {
-                    console.warn("User already registered:", registeredUserEmail);
-                    return res.json({ success: true });
-                } else {
-                    console.error("PostgreSQL insert error:", err);
-                    return res.json({ success: false, message: "Database error" });
-                }
-            }
-            console.log("User registered in PostgreSQL:", registeredUserEmail);
-            return res.json({ success: true });
-        });
-    } else {
-        return res.json({ success: false, message: "Invalid code" });
-    }
-});
 
 // ✅ Login Endpoint
 app.post("/login", (req, res) => {
