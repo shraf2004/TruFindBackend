@@ -122,68 +122,42 @@ app.post("/verify-code", (req, res) => {
 
 
 // ✅ Login Endpoint
-app.post("/login", (req, res) => {
-    const { email, password } = req.body;
-    const sql = "SELECT * FROM users WHERE email=$1";
-    pool.query(sql, [email], (err, result) => {
-        if (err) {
-            console.error("Login error:", err);
-            return res.json({ success: false, message: "Server error" });
-        }
-        if (result.rows.length > 0) {
-            const user = result.rows[0];
-            bcrypt.compare(password, user.password, (err, isMatch) => {
-                if (err) {
-                    console.error("Error comparing passwords", err);
-                    return res.json({ success: false, message: "Login Failed" });
-                }
-                if (isMatch) {
-                    return res.json({ success: true, name: user.name });
-                } else {
-                    return res.json({ success: false, message: "Invalid credentials" });
-                }
-            });
-        } else {
-            return res.json({ success: false, message: "Invalid credentials" });
-        }
-    });
-});
-
-// ✅ Create New Post with Optional Image
 app.post("/posts", upload.single("file"), async (req, res) => {
     try {
         const name = req.body.name;
         const text = req.body.text;
         const file = req.file;
 
-        let imageUrl = "No file was uploaded";
-
         if (file) {
-            cloudinary.uploader.upload_stream({ resource_type: "image" }, (error, result) => {
-                if (error) {
-                    console.error("Cloudinary error:", error);
-                    return res.json({ success: false, message: "Cloudinary upload failed" });
-                } else {
-                    const sql = "INSERT INTO posts (name, text, fileName) VALUES ($1, $2, $3)";
-                    pool.query(sql, [name, text, result.secure_url], (err) => {
-                        if (err) {
-                            console.error("PostgreSQL save error:", err);
-                            return res.json({ success: false, message: "PostgreSQL save failed" });
-                        } else {
-                            console.log("Post saved with Cloudinary url!");
-                            return res.json({ success: true });
-                        }
-                    });
-                }
-            }).end(file.buffer);
-        } else {
+            const result = await new Promise((resolve, reject) => {
+                cloudinary.uploader.upload_stream({ resource_type: "image" }, (error, result) => {
+                    if (error) {
+                        console.error("Cloudinary error:", error);
+                        reject("Cloudinary upload failed");
+                    } else {
+                        resolve(result);
+                    }
+                }).end(file.buffer);
+            });
+
             const sql = "INSERT INTO posts (name, text, fileName) VALUES ($1, $2, $3)";
-            pool.query(sql, [name, text, imageUrl], (err) => {
+            pool.query(sql, [name, text, result.secure_url], (err) => {
                 if (err) {
                     console.error("PostgreSQL save error:", err);
                     return res.json({ success: false, message: "PostgreSQL save failed" });
                 } else {
-                    console.log("Post saved without image!");
+                    console.log("Post saved with Cloudinary URL");
+                    return res.json({ success: true });
+                }
+            });
+        } else {
+            const sql = "INSERT INTO posts (name, text, fileName) VALUES ($1, $2, $3)";
+            pool.query(sql, [name, text, "No file was uploaded"], (err) => {
+                if (err) {
+                    console.error("PostgreSQL save error:", err);
+                    return res.json({ success: false, message: "PostgreSQL save failed" });
+                } else {
+                    console.log("Post saved without image");
                     return res.json({ success: true });
                 }
             });
@@ -193,6 +167,7 @@ app.post("/posts", upload.single("file"), async (req, res) => {
         res.json({ success: false, message: "Server error" });
     }
 });
+
 
 // ✅ Fetch Posts by Username
 app.get("/posts/:name", (req, res) => {
