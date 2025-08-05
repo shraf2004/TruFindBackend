@@ -1,32 +1,20 @@
-// ✅ Load Environment Variables
+// ✅✅✅ TruFind server.js — Backend
 require("dotenv").config();
-
-// ✅ Cloudinary Setup
-const cloudinary = require("cloudinary").v2;
-cloudinary.config({
-    cloud_name: "dzzjsl8si",
-    api_key: "537964696873869",
-    api_secret: "1z5YO1BSvUUDcjUYEZJpx87-PMg"
-});
-
-// ✅ Multer Setup for File Uploads
-const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage() });
-
-// ✅ Import Required Packages
 const express = require("express");
 const nodemailer = require("nodemailer");
 const cors = require("cors");
 const bodyParser = require("body-parser");
 const bcrypt = require("bcrypt");
 const { Pool } = require("pg");
+const multer = require("multer");
+const cloudinary = require("cloudinary").v2;
 
-// ✅ Initialize Express App
+// ✅ Setup Express
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
 
-// ✅ Setup PostgreSQL Connection
+// ✅ Setup PostgreSQL
 const pool = new Pool({
     host: process.env.PGHOST,
     port: process.env.PGPORT,
@@ -36,41 +24,39 @@ const pool = new Pool({
     ssl: { rejectUnauthorized: false }
 });
 
+// ✅ Cloudinary Config
+cloudinary.config({
+    cloud_name: "dzzjsl8si",
+    api_key: "537964696873869",
+    api_secret: "1z5YO1BSvUUDcjUYEZJpx87-PMg"
+});
 
-// ✅ Temporary Storage for Verification Process
-let verificationCode = "";
-let registeredUserName = "";
-let registeredUserEmail = "";
-let registeredUserPassword = "";
+// ✅ Multer Setup
+const upload = multer({ storage: multer.memoryStorage() });
 
+// ✅ Generate 6-digit Code
 function genCode() {
     return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-// ✅ Send Verification Code via Email
+// ✅ Send Email Verification Code
 app.post("/send-code", (req, res) => {
     const { email, name, password } = req.body;
-
     if (!email.endsWith("@truman.edu")) {
         return res.json({ success: false, message: "Only Truman email allowed." });
     }
 
-    const code = genCode(); // always generate new code
-
+    const code = genCode();
     bcrypt.hash(password, 10, (err, hashedPassword) => {
         if (err) return res.json({ success: false, message: "Password error" });
 
-        const sql = `
-            INSERT INTO users (name, email, password, verification_code)
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (email) DO UPDATE
-            SET name = EXCLUDED.name, password = EXCLUDED.password, verification_code = EXCLUDED.verification_code
-        `;
+        const sql = `INSERT INTO users (name, email, password, verification_code)
+                     VALUES ($1, $2, $3, $4)
+                     ON CONFLICT (email) DO UPDATE
+                     SET name = EXCLUDED.name, password = EXCLUDED.password, verification_code = EXCLUDED.verification_code`;
+
         pool.query(sql, [name, email, hashedPassword, code], (err) => {
-            if (err) {
-                console.error("DB error:", err);
-                return res.json({ success: false, message: "Database error" });
-            }
+            if (err) return res.json({ success: false, message: "Database error" });
 
             const transporter = nodemailer.createTransport({
                 service: "gmail",
@@ -95,137 +81,88 @@ app.post("/send-code", (req, res) => {
     });
 });
 
-
-// ✅ Verify Code and Register User
+// ✅ Verify Code
 app.post("/verify-code", (req, res) => {
     const { email, code } = req.body;
-
     const sql = "SELECT * FROM users WHERE email=$1 AND verification_code=$2";
     pool.query(sql, [email, code], (err, result) => {
         if (err || result.rows.length === 0) {
             return res.json({ success: false, message: "Invalid code or email" });
         }
 
-        const updateSQL = `
-            UPDATE users SET is_verified = true, verification_code = NULL
-            WHERE email = $1
-        `;
+        const updateSQL = `UPDATE users SET is_verified = true, verification_code = NULL WHERE email = $1`;
         pool.query(updateSQL, [email], (err) => {
-            if (err) {
-                console.error("DB update error:", err);
-                return res.json({ success: false, message: "Failed to verify" });
-            }
+            if (err) return res.json({ success: false, message: "Failed to verify" });
             return res.json({ success: true });
         });
     });
 });
 
-
-// ✅ Login Endpoint
-app.post("/posts", upload.single("file"), async (req, res) => {
+// ✅ Create Post
+app.post("/posts", upload.single("image"), async (req, res) => {
     try {
-        const name = req.body.name;
-        const text = req.body.text;
+        const userId = req.body.user_id;
+        const title = req.body.title;
+        const description = req.body.description;
         const file = req.file;
+
+        let imageUrl = "No image";
 
         if (file) {
             const result = await new Promise((resolve, reject) => {
                 cloudinary.uploader.upload_stream({ resource_type: "image" }, (error, result) => {
-                    if (error) {
-                        console.error("Cloudinary error:", error);
-                        reject("Cloudinary upload failed");
-                    } else {
-                        resolve(result);
-                    }
+                    if (error) reject("Cloudinary error");
+                    else resolve(result);
                 }).end(file.buffer);
             });
-
-            const sql = "INSERT INTO posts (name, text, fileName) VALUES ($1, $2, $3)";
-            pool.query(sql, [name, text, result.secure_url], (err) => {
-                if (err) {
-                    console.error("PostgreSQL save error:", err);
-                    return res.json({ success: false, message: "PostgreSQL save failed" });
-                } else {
-                    console.log("Post saved with Cloudinary URL");
-                    return res.json({ success: true });
-                }
-            });
-        } else {
-            const sql = "INSERT INTO posts (name, text, fileName) VALUES ($1, $2, $3)";
-            pool.query(sql, [name, text, "No file was uploaded"], (err) => {
-                if (err) {
-                    console.error("PostgreSQL save error:", err);
-                    return res.json({ success: false, message: "PostgreSQL save failed" });
-                } else {
-                    console.log("Post saved without image");
-                    return res.json({ success: true });
-                }
-            });
+            imageUrl = result.secure_url;
         }
-    } catch (error) {
-        console.error("Server error:", error);
-        res.json({ success: false, message: "Server error" });
+
+        const sql = `INSERT INTO posts (user_id, title, description, image_url, created_at)
+                     VALUES ($1, $2, $3, $4, NOW())`;
+
+        pool.query(sql, [userId, title, description, imageUrl], (err) => {
+            if (err) return res.json({ success: false });
+            return res.json({ success: true });
+        });
+    } catch (err) {
+        return res.json({ success: false, message: "Server error" });
     }
 });
 
-
-// ✅ Fetch Posts by Username
-app.get("/posts/:name", (req, res) => {
-    const name = req.params.name;
-    const sql = "SELECT * FROM posts WHERE name=$1 ORDER BY time DESC";
-    pool.query(sql, [name], (err, result) => {
-        if (err) {
-            console.error("Error fetching posts:", err);
-            return res.json({ success: false });
-        }
+// ✅ Get Posts by user_id
+app.get("/posts/:user_id", (req, res) => {
+    const userId = req.params.user_id;
+    const sql = "SELECT * FROM posts WHERE user_id = $1 ORDER BY created_at DESC";
+    pool.query(sql, [userId], (err, result) => {
+        if (err) return res.json({ success: false });
         res.json({ success: true, posts: result.rows });
     });
 });
 
-// ✅ Fetch All Posts
+// ✅ Get All Posts with user name
 app.get("/all-posts", (req, res) => {
-    const sql = "SELECT * FROM posts ORDER BY time DESC";
+    const sql = `SELECT posts.*, users.name FROM posts JOIN users ON posts.user_id = users.id ORDER BY created_at DESC`;
     pool.query(sql, (err, result) => {
-        if (err) {
-            console.error("Error fetching posts", err);
-            return res.json({ success: false });
-        }
+        if (err) return res.json({ success: false });
         return res.json({ success: true, posts: result.rows });
     });
 });
 
-// ✅ Delete Post by ID and Username
+// ✅ Delete Post
 app.delete("/delete-posts/:id", (req, res) => {
     const postId = req.params.id;
-    const userName = req.query.name;
-    const sql = "DELETE FROM posts WHERE id = $1 AND name = $2";
-    pool.query(sql, [postId, userName], (err, result) => {
-        if (err) {
-            console.error("Error deleting post:", err);
-            return res.json({ success: false, message: "Delete failed" });
-        }
-        if (result.rowCount > 0) {
-            return res.json({ success: true, message: "Post deleted" });
-        } else {
-            return res.json({ success: false, message: "No post found" });
-        }
+    const userId = req.query.userId;
+    const sql = "DELETE FROM posts WHERE id = $1 AND user_id = $2";
+    pool.query(sql, [postId, userId], (err, result) => {
+        if (err) return res.json({ success: false });
+        if (result.rowCount > 0) return res.json({ success: true });
+        else return res.json({ success: false });
     });
 });
 
-// ✅ Start the Server
+// ✅ Start Server
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
-});
-
-
-
-app.get("/test-db", async (req, res) => {
-  try {
-    const result = await pool.query("SELECT * FROM users");
-    res.json({ success: true, rows: result.rows });
-  } catch (err) {
-    res.json({ success: false, error: err.message });
-  }
+    console.log(`Server running at http://localhost:${PORT}`);
 });
