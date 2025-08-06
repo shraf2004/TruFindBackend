@@ -166,3 +166,34 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running at http://localhost:${PORT}`);
 });
+
+
+// ✅ Login Route
+app.post("/login", (req, res) => {
+    const { email, password } = req.body;
+
+    // 1. Find the user with matching email and verified status
+    const sql = "SELECT * FROM users WHERE email = $1 AND is_verified = true";
+    pool.query(sql, [email], (err, result) => {
+        if (err) {
+            console.error("DB error during login:", err);
+            return res.json({ success: false, message: "Database error" });
+        }
+
+        if (result.rows.length === 0) {
+            return res.json({ success: false, message: "User not found or not verified" });
+        }
+
+        const user = result.rows[0];
+
+        // 2. Compare password
+        bcrypt.compare(password, user.password, (err, match) => {
+            if (err || !match) {
+                return res.json({ success: false, message: "Invalid password" });
+            }
+
+            // 3. Send user info back on successful login
+            return res.json({ success: true, id: user.id, name: user.name });
+        });
+    });
+});
