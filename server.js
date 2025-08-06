@@ -47,39 +47,54 @@ app.post("/send-code", (req, res) => {
     }
 
     const code = genCode();
-    bcrypt.hash(password, 10, (err, hashedPassword) => {
-        if (err) return res.json({ success: false, message: "Password error" });
 
-        const sql = `INSERT INTO users (name, email, password, verification_code)
-                     VALUES ($1, $2, $3, $4)
-                     ON CONFLICT (email) DO UPDATE
-                     SET name = EXCLUDED.name, password = EXCLUDED.password, verification_code = EXCLUDED.verification_code`;
+    // Check if user already verified
+    const checkSQL = "SELECT * FROM users WHERE email = $1";
+    pool.query(checkSQL, [email], (err, result) => {
+        if (err) return res.json({ success: false, message: "Database error" });
 
-        pool.query(sql, [name, email, hashedPassword, code], (err) => {
-            if (err) return res.json({ success: false, message: "Database error" });
+        const existingUser = result.rows[0];
 
-            const transporter = nodemailer.createTransport({
-                service: "gmail",
-                auth: {
-                    user: process.env.GMAIL_USER,
-                    pass: process.env.GMAIL_PASS
-                }
-            });
+        if (existingUser && existingUser.is_verified) {
+            return res.json({ success: false, message: "Email is already registered." });
+        }
 
-            const mailOptions = {
-                from: process.env.GMAIL_USER,
-                to: email,
-                subject: "Your TruFind Verification Code",
-                text: `Your verification code is: ${code}`
-            };
+        // Not verified yet — insert or update
+        bcrypt.hash(password, 10, (err, hashedPassword) => {
+            if (err) return res.json({ success: false, message: "Password error" });
 
-            transporter.sendMail(mailOptions, (err) => {
-                if (err) return res.json({ success: false, message: "Email error" });
-                return res.json({ success: true });
+            const sql = `INSERT INTO users (name, email, password, verification_code, is_verified)
+                         VALUES ($1, $2, $3, $4, false)
+                         ON CONFLICT (email) DO UPDATE
+                         SET name = EXCLUDED.name, password = EXCLUDED.password, verification_code = EXCLUDED.verification_code, is_verified = false`;
+
+            pool.query(sql, [name, email, hashedPassword, code], (err) => {
+                if (err) return res.json({ success: false, message: "Database error" });
+
+                const transporter = nodemailer.createTransport({
+                    service: "gmail",
+                    auth: {
+                        user: process.env.GMAIL_USER,
+                        pass: process.env.GMAIL_PASS
+                    }
+                });
+
+                const mailOptions = {
+                    from: process.env.GMAIL_USER,
+                    to: email,
+                    subject: "Your TruFind Verification Code",
+                    text: `Your verification code is: ${code}`
+                };
+
+                transporter.sendMail(mailOptions, (err) => {
+                    if (err) return res.json({ success: false, message: "Email error" });
+                    return res.json({ success: true });
+                });
             });
         });
     });
 });
+
 
 // ✅ Verify Code
 app.post("/verify-code", (req, res) => {
